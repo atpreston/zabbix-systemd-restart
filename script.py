@@ -1,12 +1,15 @@
 from zabbix_utils import ZabbixAPI
 
 def get_hosts(hostnames):
+    if len(hostnames) == 0:
+        print("No hosts available to monitor")
+        return []
     unmonitored = set(hostnames)
     monitored = set()
     exit = False
     while exit == False:
         print(f"You are monitoring {len(monitored)} of {len(hostnames)} hosts")
-        state = input("Would you like to add a host to the monitoring list, remove a host from the monitoring list, or exit and save changes? [a/r/e] ")
+        state = input("Would you like to (a)dd a host to the monitoring list, (r)emove a host from the monitoring list, or (e)xit and save changes? [a/r/e] ")
         if state.lower() == "a":
             print(f"Unmonitored hosts: {unmonitored}")
             if len(unmonitored) == 0:
@@ -38,9 +41,12 @@ def get_hosts(hostnames):
                 monitored.remove(hostname)
                 unmonitored.add(hostname)
         elif state.lower() == "e":
-            exit = True
+            if len(monitored) == 0:
+                print("Please choose at least 1 host to monitor")
+            else:
+                exit = True
         else:
-            print("Please tye either 'a', 'r', or 'e'")
+            print("Please type either 'a', 'r', or 'e'")
     
     return monitored
 
@@ -69,17 +75,18 @@ def controller(input_url, input_user, input_password, service): # TODO: Add supp
     hosts = api.host.get(templateids=[systemdtemplate['templateid']])
     hostnames = [h['host'] for h in hosts]
     print(f"Found {len(hosts)} hosts with Systemd template access: {hostnames}")
-    if input("Is this expected? [Y/n] ") in "noNoNO" and not "":
+    expected = input("Is this expected? [Y/n] ")
+    if expected.lower() == "no" or expected.lower() == "n":
         print("Ok, please give the desired hosts the 'Systemd by Zabbix agent 2' template via the web interface")
         api.logout()
         return 0
     
     hosts = list(get_hosts(hostnames))
+    if len(hosts) == 0:
+        return 0
     
-    scipts = api.script.get(
-        
-    )
-    api.script.create(
+    # TODO: add check that script has not already been created
+    script = api.script.create(
         name=f"restart {service}",
         command=f"sudo -u root /bin/systemctl restart {service}",
         type=0,
@@ -88,17 +95,17 @@ def controller(input_url, input_user, input_password, service): # TODO: Add supp
     )
     
     api.action.create(
-        esc_period="1m",
-        name=f"Restart {service}",
-        operations=[]
+        name=f"Restart {service} action",
+        operations=[{
+            'operationtype': 1,
+            'opcommand': [script], # TODO: FIX THIS OBJECT PASSING TO API
+            'opcommand_grp': "All",
+        }],
+        eventsource=1,
     )
     
-    users = api.user.get(
-        output=['userid','name']
-    )
-
-    for user in users:
-        print(user['name'])
+    print("Please now add the following line to your sudoers config:")
+    print(f"'zabbix ALL=(root)NOPASSWD: /bin/systemctl start {service}'")
     
     api.logout()
 
