@@ -4,8 +4,8 @@ def get_hosts(hostnames):
     if len(hostnames) == 0:
         print("No hosts available to monitor")
         return []
-    unmonitored = set(hostnames)
-    monitored = set()
+    monitored = set(hostnames)
+    unmonitored = set()
     exit = False
     while exit == False:
         print(f"You are monitoring {len(monitored)} of {len(hostnames)} hosts")
@@ -50,8 +50,26 @@ def get_hosts(hostnames):
     
     return monitored
 
-
-
+def create_script(api, service):
+    scripts = api.script.get()
+    
+    for s in scripts:
+        if s['name'] == f"restart {service}":
+            response = input(f"There is already a script called 'restart {service}'. Would you like to delete it? [Y/n] ")
+            if response.lower() == "no" or response.lower() == "n":
+                print("Duplicate scripts cannot be created. Exiting.")
+                return 0
+            else:
+                api.script.delete(s['scriptid'])
+    
+    return api.script.create(
+        name=f"restart {service}",
+        command=f"sudo -u root /bin/systemctl restart {service}",
+        type=0,
+        scope=1,
+        execute_on=0
+    )
+    
 def controller(input_url, input_user, input_password, service): # TODO: Add support for API token login
     api = ZabbixAPI(url=input_url)
     api.login(user="Admin", password="zabbix")
@@ -81,27 +99,26 @@ def controller(input_url, input_user, input_password, service): # TODO: Add supp
         api.logout()
         return 0
     
-    hosts = list(get_hosts(hostnames))
-    if len(hosts) == 0:
+    chosenhosts = list(get_hosts(hostnames))
+    if len(chosenhosts) == 0:
         return 0
+    hosts = [h for h in hosts if h['host'] in chosenhosts] # filter to 'hosts' just has the selected hosts
+    print(hosts)
     
-    # TODO: add check that script has not already been created
-    script = api.script.create(
-        name=f"restart {service}",
-        command=f"sudo -u root /bin/systemctl restart {service}",
-        type=0,
-        scope=1,
-        execute_on=0
-    )
+    script = create_script(api, service)
+    print(script)
     
     api.action.create(
         name=f"Restart {service} action",
         operations=[{
-            'operationtype': 1,
-            'opcommand': [script], # TODO: FIX THIS OBJECT PASSING TO API
-            'opcommand_grp': "All",
+            'operationtype': 0,
+            'opcommand': {
+                'scriptid': int(script['scriptids'][0])
+            },
+            'opcommand_hst': [{'hostid': h['hostid']} for h in hosts]
         }],
         eventsource=1,
+        conditiontype=2
     )
     
     print("Please now add the following line to your sudoers config:")
