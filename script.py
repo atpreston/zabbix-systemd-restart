@@ -122,7 +122,7 @@ def create_action(api, service, hosts):
         eventsource=0,
     )
 
-def controller(api, session, service):
+def controller(api, session, services):
     if session['type'] != 3:
         print("User does not have required priviledges (Super admin)")
         api.logout()
@@ -152,15 +152,18 @@ def controller(api, session, service):
         return 0
     hosts = [h for h in hosts if h['host'] in chosenhosts] # filter to 'hosts' just has the selected hosts
 
-    create_action(api, service, hosts)
-    
-    print("Please now add the following line to your sudoers config:")
-    print(f"'zabbix ALL=(root)NOPASSWD: /bin/systemctl restart {service}'")
-    
+    sudoers = []
+    for service in services:
+        create_action(api, service, hosts)
+        sudoers.append(f"'zabbix ALL=(root)NOPASSWD: /bin/systemctl restart {service}'")
+
+    print("Please now add the following lines to your sudoers config:")
+    for l in sudoers: print(l)
     api.logout()
 
 if __name__ == "__main__":
     url = input("Please enter the URL of your Zabbix server: ")
     (api, session) = login(url)
-    service = input("Please enter the name of the Systemd service you wish to restart (without any qualifications, i.e. 'bluetooth' not 'bluetooth.service'): ")
-    controller(api, session, service)
+    services_raw = input("Please enter the names of the Systemd services you wish to restart seperated by spaces (without any qualifications, i.e. 'bluetooth' not 'bluetooth.service'): ")
+    services = services_raw.split()
+    controller(api, session, services)
