@@ -1,13 +1,25 @@
 from zabbix_utils import ZabbixAPI
 
+def login(url):
+    # Note that token usage is not required for this case. The user account in the api.user login step must have Super Admin priviledge access, and so can be used in the first step.
+    # If a token was used, a Super Admin username and password must be provided for the second step anyway.
+    
+    api = ZabbixAPI(url=url)
+    username = input("Please enter a username: ")
+    password = input(f"Please enter the password for {username}: ")
+    
+    api.login(user=username, password=password)
+    session = api.user.login(username=username, password=password, userData=True)
+    return (api, session)
+
 def get_hosts(hostnames):
     if len(hostnames) == 0:
         print("No hosts available to monitor")
         return []
     monitored = set(hostnames)
     unmonitored = set()
-    exit = False
-    while exit == False:
+    exited = False
+    while exited == False:
         print(f"You are monitoring {len(monitored)} of {len(hostnames)} hosts")
         state = input("Would you like to (a)dd a host to the monitoring list, (r)emove a host from the monitoring list, or (e)xit and save changes? [a/r/e] ")
         if state.lower() == "a":
@@ -44,7 +56,7 @@ def get_hosts(hostnames):
             if len(monitored) == 0:
                 print("Please choose at least 1 host to monitor")
             else:
-                exit = True
+                exited = True
         else:
             print("Please type either 'a', 'r', or 'e'")
     
@@ -54,8 +66,8 @@ def create_script(api, service):
     scripts = api.script.get()
     
     for s in scripts:
-        if s['name'] == f"restart {service}":
-            response = input(f"There is already a script called 'restart {service}'. Would you like to replace it? [Y/n] ")
+        if s['name'] == f"Restart {service} script":
+            response = input(f"There is already a script called 'Restart {service} script'. Would you like to replace it? [Y/n] ")
             if response.lower() == "no" or response.lower() == "n":
                 print("Duplicate scripts cannot be created. Exiting.")
                 return 0
@@ -63,7 +75,7 @@ def create_script(api, service):
                 api.script.delete(s['scriptid'])
     
     return api.script.create(
-        name=f"restart {service}",
+        name=f"Restart {service} script",
         command=f"sudo -u root /bin/systemctl restart {service}",
         type=0,
         scope=1,
@@ -75,13 +87,44 @@ def get_triggers(api, service, hosts):
     triggers = [t for t in triggers if f"{service}" in t['description']]
     return triggers
 
-def controller(input_url, input_user, input_password, service): # TODO: Add support for API token login
-    api = ZabbixAPI(url=input_url)
-    api.login(user="Admin", password="zabbix")
-    session = api.user.login(username=input_user, password=input_password, userData=True)
+def create_action(api, service, hosts):
+    triggers = get_triggers(api, service, hosts)
     
+    actions = api.action.get()
+    for a in actions:
+        if a['name'] == f"Restart {service} action":
+            response = input(f"There is already an action called 'Restart {service} action'. Would you like to delete it? [Y/n] ")
+            if response.lower() == "no" or response.lower() == "n":
+                print("Duplicate actions cannot be created. Exiting.")
+                return 0
+            else:
+                api.action.delete(a['actionid'])
+    script = create_script(api, service)
+    api.action.create(
+        name=f"Restart {service} action",
+        filter={
+          'conditions': [
+              {
+                  'conditiontype': 2,
+                  'operator': 0,
+                  'value': triggers[0]['triggerid']
+              }
+          ],
+          'evaltype': 0,
+        },
+        operations=[{
+            'operationtype': 1,
+            'opcommand': {
+                'scriptid': int(script['scriptids'][0])
+            },
+            'opcommand_hst': [{'hostid': h['hostid']} for h in hosts],
+        }],
+        eventsource=0,
+    )
+
+def controller(api, session, service):
     if session['type'] != 3:
-        print("User does npot have required priviledges (Super admin)")
+        print("User does not have required priviledges (Super admin)")
         api.logout()
         return 0
     
@@ -109,41 +152,15 @@ def controller(input_url, input_user, input_password, service): # TODO: Add supp
         return 0
     hosts = [h for h in hosts if h['host'] in chosenhosts] # filter to 'hosts' just has the selected hosts
 
-    script = create_script(api, service)
-
-    triggers = get_triggers(api, service, hosts)
-
-    api.action.create(
-        name=f"Restart {service} action",
-        filter={
-          'conditions': [
-              {
-                  'conditiontype': 2,
-                  'operator': 0,
-                  'value': triggers[0]['triggerid']
-              }
-          ],
-          'evaltype': 0,
-        },
-        operations=[{
-            'operationtype': 1,
-            'opcommand': {
-                'scriptid': int(script['scriptids'][0])
-            },
-            'opcommand_hst': [{'hostid': h['hostid']} for h in hosts],
-        }],
-        eventsource=0,
-    )
+    create_action(api, service, hosts)
     
     print("Please now add the following line to your sudoers config:")
-    print(f"'zabbix ALL=(root)NOPASSWD: /bin/systemctl start {service}'")
+    print(f"'zabbix ALL=(root)NOPASSWD: /bin/systemctl restart {service}'")
     
     api.logout()
 
 if __name__ == "__main__":
-    # url = input("URL: ")
-    # user = input("USER: ")
-    # password = input("PASSWORD: ")
-    service = input("SERVICE: ")
-    (url, user, password) = ("localhost:8080", "Admin", "zabbix")
-    controller(url, user, password, service)
+    url = input("Please enter the URL of your Zabbix server: ")
+    (api, session) = login(url)
+    service = input("Please enter the name of the Systemd service you wish to restart (without any qualifications, i.e. 'bluetooth' not 'bluetooth.service'): ")
+    controller(api, session, service)
