@@ -55,7 +55,7 @@ def create_script(api, service):
     
     for s in scripts:
         if s['name'] == f"restart {service}":
-            response = input(f"There is already a script called 'restart {service}'. Would you like to delete it? [Y/n] ")
+            response = input(f"There is already a script called 'restart {service}'. Would you like to replace it? [Y/n] ")
             if response.lower() == "no" or response.lower() == "n":
                 print("Duplicate scripts cannot be created. Exiting.")
                 return 0
@@ -69,7 +69,12 @@ def create_script(api, service):
         scope=1,
         execute_on=0
     )
-    
+
+def get_triggers(api, service, hosts):
+    triggers = api.trigger.get()
+    triggers = [t for t in triggers if f"{service}" in t['description']]
+    return triggers
+
 def controller(input_url, input_user, input_password, service): # TODO: Add support for API token login
     api = ZabbixAPI(url=input_url)
     api.login(user="Admin", password="zabbix")
@@ -103,22 +108,31 @@ def controller(input_url, input_user, input_password, service): # TODO: Add supp
     if len(chosenhosts) == 0:
         return 0
     hosts = [h for h in hosts if h['host'] in chosenhosts] # filter to 'hosts' just has the selected hosts
-    print(hosts)
-    
+
     script = create_script(api, service)
-    print(script)
-    
+
+    triggers = get_triggers(api, service, hosts)
+
     api.action.create(
         name=f"Restart {service} action",
+        filter={
+          'conditions': [
+              {
+                  'conditiontype': 2,
+                  'operator': 0,
+                  'value': triggers[0]['triggerid']
+              }
+          ],
+          'evaltype': 0,
+        },
         operations=[{
-            'operationtype': 0,
+            'operationtype': 1,
             'opcommand': {
                 'scriptid': int(script['scriptids'][0])
             },
-            'opcommand_hst': [{'hostid': h['hostid']} for h in hosts]
+            'opcommand_hst': [{'hostid': h['hostid']} for h in hosts],
         }],
-        eventsource=1,
-        conditiontype=2
+        eventsource=0,
     )
     
     print("Please now add the following line to your sudoers config:")
